@@ -97,7 +97,7 @@ const PUNCH_COOLDOWN = 1.0;
 const HOOK_COOLDOWN = 1.6;
 
 const KILL_CREDIT_TIME = 4;
-const MAX_PLAYERS = 6;
+const MAX_PLAYERS = 8;
 
 const CAMERA_VIEW_WIDTH = 980;
 const CAMERA_MAX_SPEED = 860;
