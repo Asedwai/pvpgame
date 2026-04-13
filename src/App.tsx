@@ -9,6 +9,7 @@ type InputState = {
   jump: boolean;
   punch: boolean;
   hook: boolean;
+  seq: number;
 };
 
 type PlayerState = {
@@ -39,6 +40,7 @@ type PlayerState = {
   coyoteLeft: number;
   jumpBufferLeft: number;
   jumpHeld: boolean;
+  inputSeq: number;
 };
 
 type GameState = {
@@ -113,12 +115,14 @@ const MAX_PLAYERS = 6;
 const CAMERA_DEFAULT_VIEW_WIDTH = 980;
 const CAMERA_MAX_SPEED = 860;
 const NET_STEP = 1 / 60;
-const HOST_BROADCAST_MS = 16;
-const HOST_UI_SYNC_MS = 50;
-const GUEST_UI_SYNC_MS = 90;
+const HOST_BROADCAST_MS = 12;
+const HOST_UI_SYNC_MS = 40;
+const GUEST_UI_SYNC_MS = 60;
 const CONTACT_GAP_X = 8;
 const CONTACT_GAP_Y = 6;
 const GRID_SIZE = 50;
+const CLIENT_PREDICTION_ENABLED = true;
+const INPUT_SEQUENCE_WINDOW = 120;
 
 type Platform = { x: number; y: number; w: number; h: number };
 type SpawnPoint = { x: number; y: number };
@@ -274,11 +278,15 @@ const inputMap: Record<string, keyof InputState> = {
 };
 
 function initialInput(): InputState {
-  return { left: false, right: false, jump: false, punch: false, hook: false };
+  return { left: false, right: false, jump: false, punch: false, hook: false, seq: 0 };
 }
 
 function sameInput(a: InputState, b: InputState): boolean {
   return a.left === b.left && a.right === b.right && a.jump === b.jump && a.punch === b.punch && a.hook === b.hook;
+}
+
+function sameInputWithSeq(a: InputState, b: InputState): boolean {
+  return sameInput(a, b) && a.seq === b.seq;
 }
 
 function getMapById(mapId: string): ArenaMap {
@@ -470,6 +478,7 @@ function makePlayer(id: number, name: string, mapId: string, mapOverride?: Arena
     coyoteLeft: 0,
     jumpBufferLeft: 0,
     jumpHeld: false,
+    inputSeq: 0,
   };
 }
 
@@ -1430,12 +1439,15 @@ export default function App() {
 
   useEffect(() => {
     if (role !== "guest" || !connRef.current) return;
+    let seqCounter = 0;
     const timer = window.setInterval(() => {
       if (!connRef.current?.open) return;
       const now = performance.now();
       const changed = !sameInput(localInputRef.current, lastSentInputRef.current);
       if (!changed && now - lastInputSentAtRef.current < 50) return;
-      const msg: NetInputMessage = { type: "input", input: localInputRef.current };
+      seqCounter = (seqCounter + 1) % INPUT_SEQUENCE_WINDOW;
+      const inputWithSeq: InputState = { ...localInputRef.current, seq: seqCounter };
+      const msg: NetInputMessage = { type: "input", input: inputWithSeq };
       connRef.current.send(msg);
       lastSentInputRef.current = { ...localInputRef.current };
       lastInputSentAtRef.current = now;
@@ -1707,6 +1719,8 @@ export default function App() {
     });
 
     peer.on("connection", (conn) => {
+      const pendingInputs = new Map<number, InputState>();
+      
       conn.on("data", (raw) => {
         const msg = raw as NetMessage;
         if (msg.type === "join") {
@@ -1717,7 +1731,11 @@ export default function App() {
         if (msg.type === "input") {
           const pid = connToPlayerRef.current.get(conn.peer);
           if (!pid) return;
-          hostInputsRef.current[pid] = msg.input;
+          const incomingInput = msg.input;
+          const existingInput = hostInputsRef.current[pid];
+          if (!existingInput || incomingInput.seq > existingInput.seq) {
+            hostInputsRef.current[pid] = incomingInput;
+          }
           return;
         }
 

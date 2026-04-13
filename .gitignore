@@ -1,0 +1,51 @@
+```
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Python cache (if any Python files exist in the project)
+__pycache__/
+*.pyc
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# TypeScript/JavaScript build outputs
+*.js.map
+*.ts.map
+*.tsx.map
+
+# Package lock files
+package-lock.json
+yarn.lock
+
+# System files
+*.log
+*.tmp
+
+```
