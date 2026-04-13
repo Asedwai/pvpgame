@@ -1559,8 +1559,11 @@ export default function App() {
           let finalY = Math.abs(ty - ny) < 0.15 ? ty : ny;
           if (isLocal) {
             // Improved jump detection: check for significant upward velocity change from grounded state
-            const justJumped = !!prevServer && prevServer.onGround && !target.onGround && target.vy < -100;
-            const justLanded = !!prevServer && !prevServer.onGround && target.onGround;
+            // Use visual position (cur.y) instead of server onGround to account for interpolation delay
+            const wasVisuallyGrounded = !!prevServer && Math.abs(cur.y - prevServer.y) < 2;
+            const isVisuallyAirborne = cur.y < (lastGroundYRef.current.get(target.id) ?? cur.y) - 3;
+            const justJumped = !!prevServer && wasVisuallyGrounded && isVisuallyAirborne && target.vy < -100;
+            const justLanded = !!prevServer && !isVisuallyAirborne && target.onGround;
             if (target.onGround) {
               // Strong ground settling, but avoid hard snapping every frame which feels stiff.
               const settleY = 1 - Math.exp(-34 * dt);
