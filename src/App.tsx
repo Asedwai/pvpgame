@@ -96,8 +96,8 @@ const SCORE_TO_WIN = 50;
 const GRAVITY = 1680;
 const MOVE_SPEED = 340;
 const JUMP_SPEED = 690;
-const COYOTE_TIME = 0.03;
-const JUMP_BUFFER_TIME = 0.05;
+const COYOTE_TIME = 0.05;
+const JUMP_BUFFER_TIME = 0.08;
 const JUMP_CUT_GRAVITY_MULT = 1.45;
 
 const PUNCH_PUSH_X = 1000;
@@ -115,13 +115,13 @@ const MAX_PLAYERS = 6;
 const CAMERA_DEFAULT_VIEW_WIDTH = 980;
 const CAMERA_MAX_SPEED = 860;
 const NET_STEP = 1 / 60;
-const HOST_BROADCAST_MS = 12;
-const HOST_UI_SYNC_MS = 40;
-const GUEST_UI_SYNC_MS = 60;
+const HOST_BROADCAST_MS = 10;
+const HOST_UI_SYNC_MS = 30;
+const GUEST_UI_SYNC_MS = 45;
 const CONTACT_GAP_X = 8;
 const CONTACT_GAP_Y = 6;
 const GRID_SIZE = 50;
-const CLIENT_PREDICTION_ENABLED = true;
+const CLIENT_PREDICTION_ENABLED = false;
 const INPUT_SEQUENCE_WINDOW = 120;
 
 type Platform = { x: number; y: number; w: number; h: number };
@@ -1558,7 +1558,8 @@ export default function App() {
           const finalX = clampPlayerXToMap(Math.abs(tx - nx) < 0.15 ? tx : nx, map);
           let finalY = Math.abs(ty - ny) < 0.15 ? ty : ny;
           if (isLocal) {
-            const justJumped = !!prevServer && prevServer.vy > -30 && target.vy < -140;
+            // Improved jump detection: check for significant upward velocity change from grounded state
+            const justJumped = !!prevServer && prevServer.onGround && !target.onGround && target.vy < -100;
             const justLanded = !!prevServer && !prevServer.onGround && target.onGround;
             if (target.onGround) {
               // Strong ground settling, but avoid hard snapping every frame which feels stiff.
@@ -1570,6 +1571,7 @@ export default function App() {
             } else {
               const airY = 1 - Math.exp(-18 * dt);
               finalY = cur.y + (ty - cur.y) * airY;
+              // Only apply jump visual correction when we actually detected a fresh jump from grounded state
               if (justJumped) {
                 // Prevent the visual "not landed but already jumped" illusion on chained jumps.
                 const groundY = lastGroundYRef.current.get(target.id);
