@@ -96,8 +96,8 @@ const SCORE_TO_WIN = 50;
 const GRAVITY = 1680;
 const MOVE_SPEED = 340;
 const JUMP_SPEED = 690;
-const COYOTE_TIME = 0.05;
-const JUMP_BUFFER_TIME = 0.08;
+const COYOTE_TIME = 0.08;
+const JUMP_BUFFER_TIME = 0.12;
 const JUMP_CUT_GRAVITY_MULT = 1.45;
 
 const PUNCH_PUSH_X = 1000;
@@ -115,13 +115,13 @@ const MAX_PLAYERS = 6;
 const CAMERA_DEFAULT_VIEW_WIDTH = 980;
 const CAMERA_MAX_SPEED = 860;
 const NET_STEP = 1 / 60;
-const HOST_BROADCAST_MS = 10;
-const HOST_UI_SYNC_MS = 30;
-const GUEST_UI_SYNC_MS = 45;
+const HOST_BROADCAST_MS = 12;
+const HOST_UI_SYNC_MS = 40;
+const GUEST_UI_SYNC_MS = 60;
 const CONTACT_GAP_X = 8;
 const CONTACT_GAP_Y = 6;
 const GRID_SIZE = 50;
-const CLIENT_PREDICTION_ENABLED = false;
+const CLIENT_PREDICTION_ENABLED = true;
 const INPUT_SEQUENCE_WINDOW = 120;
 
 type Platform = { x: number; y: number; w: number; h: number };
@@ -1086,6 +1086,8 @@ export default function App() {
 
   const localInputRef = useRef<InputState>(initialInput());
   const hostInputsRef = useRef<Record<number, InputState>>({ 1: initialInput() });
+  const guestPredictedInputRef = useRef<InputState>(initialInput());
+  const guestPredictedStateRef = useRef<Map<number, { x: number; y: number; vx: number; vy: number; onGround: boolean; coyoteLeft: number; jumpBufferLeft: number }>>(new Map());
   const gameRef = useRef<GameState>(game);
   const lastSentNicknameRef = useRef("");
   const lastSentInputRef = useRef<InputState>(initialInput());
@@ -1450,6 +1452,7 @@ export default function App() {
       const msg: NetInputMessage = { type: "input", input: inputWithSeq };
       connRef.current.send(msg);
       lastSentInputRef.current = { ...localInputRef.current };
+      guestPredictedInputRef.current = { ...localInputRef.current };
       lastInputSentAtRef.current = now;
     }, 16);
     return () => window.clearInterval(timer);
@@ -1506,17 +1509,96 @@ export default function App() {
   useEffect(() => {
     if (role === "menu") {
       setRenderFrame({ visualPlayers: toVisualPlayers(game.players), viewX: 0 });
+      guestPredictedStateRef.current.clear();
       return;
     }
 
     let raf = 0;
     let prevNow = performance.now();
+    
+    // Guest-side prediction loop
+    let predictionAccumulator = 0;
+    const PREDICTION_STEP = 1 / 60;
+    
     const tick = () => {
       const targets = gameRef.current.players;
       const map = mapFromState(gameRef.current);
       const now = performance.now();
       const dt = Math.min(0.033, (now - prevNow) / 1000);
       prevNow = now;
+      
+      // Run client-side prediction for local player
+      if (role === "guest" && CLIENT_PREDICTION_ENABLED) {
+        predictionAccumulator += dt;
+        
+        // Initialize predicted state from last server snapshot if needed
+        const meServer = targets.find((p) => p.id === myPlayerId);
+        if (meServer) {
+          if (!guestPredictedStateRef.current.has(myPlayerId)) {
+            guestPredictedStateRef.current.set(myPlayerId, {
+              x: meServer.x,
+              y: meServer.y,
+              vx: meServer.vx,
+              vy: meServer.vy,
+              onGround: meServer.onGround,
+              coyoteLeft: COYOTE_TIME,
+              jumpBufferLeft: 0,
+            });
+          }
+          
+          // Apply prediction steps
+          while (predictionAccumulator >= PREDICTION_STEP) {
+            const pred = guestPredictedStateRef.current.get(myPlayerId)!;
+            const input = guestPredictedInputRef.current;
+            
+            // Apply gravity
+            pred.vy += GRAVITY * PREDICTION_STEP;
+            
+            // Apply movement
+            if (input.left === input.right) {
+              pred.vx *= pred.onGround ? 0.75 : 0.94;
+            } else {
+              pred.vx = (input.left ? -1 : 1) * MOVE_SPEED;
+            }
+            
+            // Update coyote time and jump buffer
+            if (pred.onGround) {
+              pred.coyoteLeft = COYOTE_TIME;
+            } else {
+              pred.coyoteLeft = Math.max(0, pred.coyoteLeft - PREDICTION_STEP);
+            }
+            
+            if (input.jump) {
+              pred.jumpBufferLeft = JUMP_BUFFER_TIME;
+            } else {
+              pred.jumpBufferLeft = Math.max(0, pred.jumpBufferLeft - PREDICTION_STEP);
+            }
+            
+            // Jump if buffer > 0 and on ground or has coyote time
+            if (pred.jumpBufferLeft > 0 && (pred.onGround || pred.coyoteLeft > 0)) {
+              pred.vy = -JUMP_SPEED;
+              pred.onGround = false;
+              pred.coyoteLeft = 0;
+              pred.jumpBufferLeft = 0;
+            }
+            
+            // Apply position
+            pred.x += pred.vx * PREDICTION_STEP;
+            pred.y += pred.vy * PREDICTION_STEP;
+            
+            // Simple ground check (assume y=0 is ground for prediction)
+            const groundY = 0;
+            if (pred.y >= groundY) {
+              pred.y = groundY;
+              pred.vy = 0;
+              pred.onGround = true;
+            }
+            
+            predictionAccumulator -= PREDICTION_STEP;
+          }
+        }
+      }
+      
       setRenderFrame((prev) => {
         if (role === "host") {
           const me = targets.find((p) => p.id === myPlayerId) ?? targets[0];
@@ -1595,7 +1677,14 @@ export default function App() {
 
         const stabilizedVisual = nextVisual;
 
-        const meX = role === "guest" ? meVisualX ?? meServer?.x : meServer?.x;
+        // Use predicted position for local player when prediction is enabled
+        let meX = role === "guest" ? meVisualX ?? meServer?.x : meServer?.x;
+        if (role === "guest" && CLIENT_PREDICTION_ENABLED) {
+          const pred = guestPredictedStateRef.current.get(myPlayerId);
+          if (pred) {
+            meX = clampPlayerXToMap(pred.x, map);
+          }
+        }
         let nextView = prev.viewX;
         if (meX !== undefined) {
           const targetView = clampView(meX + PLAYER_W / 2 - cameraWidth / 2, map.width, cameraWidth);
